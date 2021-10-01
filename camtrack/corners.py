@@ -49,16 +49,35 @@ class _CornerStorageBuilder:
 def _build_impl(frame_sequence: pims.FramesSequence,
                 builder: _CornerStorageBuilder) -> None:
     # TODO
+    ncorners = 5000
     image_0 = frame_sequence[0]
+    corners0 = cv2.goodFeaturesToTrack(image_0, maxCorners=ncorners, qualityLevel=0.01, minDistance=3, blockSize=5)
+    ncorners = corners0.shape[0]
+    corners0 = corners0.reshape(ncorners, 2)
+    sizes = np.zeros(ncorners)
+    sizes.fill(10)
     corners = FrameCorners(
-        np.array([0]),
-        np.array([[0, 0]]),
-        np.array([55])
+        np.array(np.arange(ncorners)),
+        np.array(corners0),
+        sizes
     )
     builder.set_corners_at_frame(0, corners)
     for frame, image_1 in enumerate(frame_sequence[1:], 1):
+        corners1, _st, _err = cv2.calcOpticalFlowPyrLK(prevImg=np.uint8(image_0 * 255),
+                                                       nextImg=np.uint8(image_1 * 255),
+                                                       prevPts=corners0,
+                                                       nextPts=None,
+                                                       maxLevel=5,
+                                                       winSize=(7, 7))
+        corners1 = corners1.reshape(corners1.shape[0], 2)
+        corners = FrameCorners(
+            np.array(np.arange(corners1.shape[0])),
+            np.array(corners1),
+            sizes
+        )
         builder.set_corners_at_frame(frame, corners)
         image_0 = image_1
+        corners0 = corners1
 
 
 def build(frame_sequence: pims.FramesSequence,
