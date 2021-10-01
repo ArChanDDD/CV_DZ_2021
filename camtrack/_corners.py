@@ -34,9 +34,9 @@ class FrameCorners:
     (np.searchsorted).
     """
 
-    __slots__ = ('_ids', '_points', '_sizes')
+    __slots__ = ('_ids', '_points', '_sizes', '_dist', '_err')
 
-    def __init__(self, ids, points, sizes):
+    def __init__(self, ids, points, sizes, old_points=None, err=None):
         """
         Construct FrameCorners.
 
@@ -50,6 +50,12 @@ class FrameCorners:
         self._ids = ids[sorting_idx].reshape(-1, 1)
         self._points = points[sorting_idx].reshape(-1, 2)
         self._sizes = sizes[sorting_idx].reshape(-1, 1)
+        self._err = err  # Si-Tomasi
+        dist = []  # Distance
+        if old_points is not None:
+            for i in range(len(points)):
+                dist.append(np.linalg.norm(old_points[i] - points[i]))
+        self._dist = np.array(dist).reshape(-1, 1)
 
     @property
     def ids(self):
@@ -62,6 +68,14 @@ class FrameCorners:
     @property
     def sizes(self):
         return self._sizes
+
+    @property
+    def err1(self):
+        return self._err
+
+    @property
+    def err2(self):
+        return self._dist
 
     def __iter__(self):
         yield self.ids
@@ -227,6 +241,25 @@ def without_short_tracks(corner_storage: CornerStorage,
 
     def predicate(corners):
         return counter[corners.ids.flatten()] >= min_len
+
+    return StorageFilter(corner_storage, predicate)
+
+
+def with_error_greater_then(corner_storage: CornerStorage,
+                            min_error: int) -> CornerStorage:
+    counter = calc_track_len_array_mapping(corner_storage)
+
+    def predicate(corners):
+        return counter[corners.err1] >= min_error
+
+    return StorageFilter(corner_storage, predicate)
+
+def without_long_dists(corner_storage: CornerStorage,
+                            max_dist: int) -> CornerStorage:
+    counter = calc_track_len_array_mapping(corner_storage)
+
+    def predicate(corners):
+        return counter[corners.err2] <= max_dist
 
     return StorageFilter(corner_storage, predicate)
 
