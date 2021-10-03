@@ -51,9 +51,28 @@ def _build_impl(frame_sequence: pims.FramesSequence,
     # TODO
     ncorners = 5000
     image_0 = frame_sequence[0]
-    corners0 = cv2.goodFeaturesToTrack(image_0, maxCorners=ncorners, qualityLevel=0.01, minDistance=3, blockSize=5)
+    img = [0, 0, 0, 0, 0]
+    img[0] = cv2.resize(image_0, (0, 0), fx=0.5, fy=0.5)
+    img[1] = cv2.resize(img[0], (0, 0), fx=0.5, fy=0.5)
+    img[2] = cv2.resize(img[1], (0, 0), fx=0.5, fy=0.5)
+    img[3] = cv2.resize(img[2], (0, 0), fx=0.5, fy=0.5)
+    img[4] = cv2.resize(img[3], (0, 0), fx=0.5, fy=0.5)
+    corners0 = np.array([])
+    for i in range(4, -1, -1):
+        corners = cv2.goodFeaturesToTrack(img[i], maxCorners=ncorners, qualityLevel=0.01, minDistance=3, blockSize=5)
+        num_corners = corners.shape[0]
+        corners = corners.reshape(num_corners, 2)
+        corners = corners * (2 ** (i + 1))
+        if i == 4:
+            corners0 = corners
+        else:
+            corners0 = np.vstack([corners0, corners])
+    corners1 = cv2.goodFeaturesToTrack(image_0, maxCorners=ncorners, qualityLevel=0.01, minDistance=3,
+                                       blockSize=5)
+    num_corners = corners1.shape[0]
+    corners1 = corners1.reshape(num_corners, 2)
+    corners0 = np.vstack([corners0, corners1])
     ncorners = corners0.shape[0]
-    corners0 = corners0.reshape(ncorners, 2)
     sizes = np.zeros(ncorners)
     sizes.fill(10)
     corners = FrameCorners(
@@ -69,6 +88,7 @@ def _build_impl(frame_sequence: pims.FramesSequence,
                                                        nextPts=None,
                                                        maxLevel=5,
                                                        winSize=(7, 7))
+        # new_corners = cv2.goodFeaturesToTrack(image_1, ncorners, 0.01)
         corners1 = corners1.reshape(corners1.shape[0], 2)
         corners = FrameCorners(
             np.array(np.arange(corners1.shape[0])),
