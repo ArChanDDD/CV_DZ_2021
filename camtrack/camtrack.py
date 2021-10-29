@@ -51,7 +51,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     frames_not_checked[known_view_1[0]] = 0
     frames_not_checked[known_view_2[0]] = 0
     corners_view1 = corner_storage[known_view_1[0]]
-    corners_view1 = corner_storage[known_view_1[0]]
     corners_view2 = corner_storage[known_view_2[0]]
     correspondence = _camtrack.build_correspondences(corners_view1, corners_view2)
     points_3d, correspondence_ids, mcos = _camtrack.triangulate_correspondences(correspondence,
