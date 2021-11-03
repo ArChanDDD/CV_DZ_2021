@@ -31,7 +31,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                           known_view_1: Optional[Tuple[int, Pose]] = None,
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:
-
     if known_view_1 is None or known_view_2 is None:
         raise NotImplementedError()
 
@@ -44,7 +43,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     # TODO: implement
     frame_count = len(corner_storage)
     triangulation_parameters = _camtrack.TriangulationParameters(2, 1, 1)
-    scope = max(int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
+    scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
     frames_not_checked = np.ones(frame_count)
@@ -58,8 +57,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                                                 pose_to_view_mat3x4(known_view_2[1]),
                                                                                 intrinsic_mat,
                                                                                 _camtrack.TriangulationParameters(5,
-                                                                                                                  0,
-                                                                                                                  0))
+                                                                                                                  0.1,
+                                                                                                                  0.1))
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count
     view_mats[known_view_1[0]] = pose_to_view_mat3x4(known_view_1[1])
     view_mats[known_view_2[0]] = pose_to_view_mat3x4(known_view_2[1])
@@ -92,18 +91,30 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         good_points = [x[1] for x in good_points]
         rvec = next_rvecs[next_i_counter % 4]
         tvec = next_tvecs[next_i_counter % 4]
-        success, rvec, tvec, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
+        success, rv, tv, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
+                                                      dist_coefs, rvec, tvec,
+                                                      useExtrinsicGuess=1,
+                                                      flags=cv2.SOLVEPNP_ITERATIVE,
+                                                      reprojectionError=2,
+                                                      confidence=0.95)
+        next_rvecs[next_i_counter % 4] = rv
+        next_tvecs[next_i_counter % 4] = tv
+        conf = 0.95
+        repr = 2
+        while not success:
+            conf -= 0.05
+            repr += 0.1
+            if conf == 0:
+                continue
+            success, rv, tv, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
                                                           dist_coefs, rvec, tvec,
                                                           useExtrinsicGuess=1,
                                                           flags=cv2.SOLVEPNP_ITERATIVE,
-                                                          reprojectionError=2,
-                                                          iterationsCount=5000,
-                                                          confidence=0.8)
-        next_rvecs[next_i_counter % 4] = rvec
-        next_tvecs[next_i_counter % 4] = tvec
-        if not success:
-            continue
-        view_mat = _camtrack.rodrigues_and_translation_to_view_mat3x4(rvec, tvec)
+                                                          reprojectionError=repr,
+                                                          confidence=conf)
+            next_rvecs[next_i_counter % 4] = rv
+            next_tvecs[next_i_counter % 4] = tv
+        view_mat = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
         view_mats[i] = view_mat
 
         # CALC NEW POINTS #
@@ -162,8 +173,9 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                     points_3d[k1] = new_points_3d[j]
                     edited_points += 1
 
-        print('Checked - {}, Current frame - {}, inlier count - {}, new triangulated points - {}, edited points - {}, cloud size - {}'
-              .format(count_checked, i, len(inliers), new_points_count, edited_points, len(points_3d)))
+        print(
+            'Checked - {}, Current frame - {}, inlier count - {}, new triangulated points - {}, edited points - {}, cloud size - {}'
+                .format(count_checked, i, len(inliers), new_points_count, edited_points, len(points_3d)))
         frames_not_checked[i] = 0
         next_i[next_i_counter % 4] += next_i_step[next_i_counter % 4]
         next_i_counter += 1
@@ -181,7 +193,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     speed = sum(dists) / len(view_mats)
     print(speed)
 
-    if speed > 6:
+    if speed > 5:
         meth = cv2.SOLVEPNP_P3P
     else:
         meth = cv2.SOLVEPNP_ITERATIVE
@@ -190,8 +202,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         rv = None
         tv = None
         for new_i in range(frame_count):
-            #if new_i == known_view_1[0] or new_i == known_view_2[0]:
-            #    continue
             new_cur_corners = corner_storage[new_i]
             new_good_ids_bool = np.array([True if a in correspondence_ids else False for a in new_cur_corners.ids])
             new_good_corners = _corners.filter_frame_corners(new_cur_corners, new_good_ids_bool)
@@ -207,8 +217,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                    useExtrinsicGuess=1,
                                                    flags=meth,
                                                    reprojectionError=1,
-                                                   iterationsCount=5000,
-                                                   confidence=0.6)
+                                                   confidence=0.95)
             if not succ:
                 continue
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
