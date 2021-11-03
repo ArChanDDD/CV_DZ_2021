@@ -96,7 +96,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                       useExtrinsicGuess=1,
                                                       flags=cv2.SOLVEPNP_ITERATIVE,
                                                       reprojectionError=2,
-                                                      confidence=0.95)
+                                                      confidence=0.97)
         next_rvecs[next_i_counter % 4] = rv
         next_tvecs[next_i_counter % 4] = tv
         conf = 0.95
@@ -217,7 +217,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                    useExtrinsicGuess=1,
                                                    flags=meth,
                                                    reprojectionError=1,
-                                                   confidence=0.95)
+                                                   confidence=0.97)
             if not succ:
                 continue
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
