@@ -67,8 +67,12 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
               min(known_view_1[0], known_view_2[0]) + 1,
               max(known_view_1[0], known_view_2[0]) - 1,
               max(known_view_1[0], known_view_2[0]) + 1]
-    next_rvecs = [None, None, None, None]
-    next_tvecs = [None, None, None, None]
+    next_rvecs = [cv2.Rodrigues(known_view_1[1].r_mat.reshape(3, 3))[0],
+                  cv2.Rodrigues(known_view_1[1].r_mat.reshape(3, 3))[0],
+                  cv2.Rodrigues(known_view_2[1].r_mat.reshape(3, 3))[0],
+                  cv2.Rodrigues(known_view_2[1].r_mat.reshape(3, 3))[0]]
+    next_tvecs = [known_view_1[1].t_vec.reshape(-1, 3), known_view_1[1].t_vec.reshape(-1, 3),
+                  known_view_2[1].t_vec.reshape(-1, 3), known_view_2[1].t_vec.reshape(-1, 3)]
     next_i_step = [-1, 1, -1, 1]
     next_i_counter = 0
     while count_checked != frame_count:
@@ -99,13 +103,13 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                       confidence=0.97)
         next_rvecs[next_i_counter % 4] = rv
         next_tvecs[next_i_counter % 4] = tv
-        conf = 0.95
+        conf = 0.97
         repr = 2
         while not success:
-            conf -= 0.05
+            conf -= 0.02
             repr += 0.1
             if conf == 0:
-                continue
+                break
             success, rv, tv, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
                                                           dist_coefs, rvec, tvec,
                                                           useExtrinsicGuess=1,
@@ -193,7 +197,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     speed = sum(dists) / len(view_mats)
     print(speed)
 
-    if speed > 5:
+    if speed > 3:
         meth = cv2.SOLVEPNP_P3P
     else:
         meth = cv2.SOLVEPNP_ITERATIVE
@@ -217,7 +221,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                    useExtrinsicGuess=1,
                                                    flags=meth,
                                                    reprojectionError=1,
-                                                   confidence=0.97)
+                                                   confidence=0.99)
             if not succ:
                 continue
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
