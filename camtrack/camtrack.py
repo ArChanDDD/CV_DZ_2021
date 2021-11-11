@@ -34,9 +34,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     if known_view_1 is None or known_view_2 is None:
         raise NotImplementedError()
 
-    seed = 0
-    # 307 -  0.6915719193461182
-
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(
         camera_parameters,
@@ -45,7 +42,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     # TODO: implement
     frame_count = len(corner_storage)
-    triangulation_parameters = _camtrack.TriangulationParameters(2, 1, 1)
+    triangulation_parameters = _camtrack.TriangulationParameters(3, 3, 1)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -61,7 +58,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                                                 intrinsic_mat,
                                                                                 _camtrack.TriangulationParameters(5,
                                                                                                                   0.1,
-                                                                                                                  0.1))
+                                                                                                                  0.01))
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count
     view_mats[known_view_1[0]] = pose_to_view_mat3x4(known_view_1[1])
     view_mats[known_view_2[0]] = pose_to_view_mat3x4(known_view_2[1])
@@ -98,12 +95,12 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                       dist_coefs, rvec, tvec,
                                                       useExtrinsicGuess=1,
                                                       flags=cv2.SOLVEPNP_ITERATIVE,
-                                                      reprojectionError=1.5,
-                                                      confidence=0.999)
+                                                      reprojectionError=1,
+                                                      confidence=0.9995)
         next_rvecs[next_i_counter % 4] = rv
         next_tvecs[next_i_counter % 4] = tv
-        conf = 0.995
-        repr = 2
+        conf = 0.999
+        repr = 1
         while not success:
             conf -= 0.02
             repr += 0.1
@@ -185,7 +182,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         count_checked += 1
 
     # RECOUNT #
-
     meth = cv2.SOLVEPNP_ITERATIVE
 
     def recount():
@@ -206,8 +202,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                    dist_coefs, rv, tv,
                                                    useExtrinsicGuess=1,
                                                    flags=meth,
-                                                   reprojectionError=1.5,
-                                                   confidence=0.9995)
+                                                   reprojectionError=1,
+                                                   confidence=0.9999)
             if not succ:
                 continue
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
