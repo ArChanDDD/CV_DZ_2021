@@ -44,7 +44,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     frame_count = len(corner_storage)
     # (2,7,1) good for house
     # (3,7,1) good for other
-    triangulation_parameters = _camtrack.TriangulationParameters(1, 8, 1)
+    # (1,10,1) for best
+    triangulation_parameters = _camtrack.TriangulationParameters(1, 10, 1)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -98,10 +99,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                       useExtrinsicGuess=1,
                                                       flags=cv2.SOLVEPNP_ITERATIVE,
                                                       reprojectionError=1,
-                                                      confidence=0.9999)
+                                                      confidence=0.99999)
         next_rvecs[next_i_counter % 4] = rv
         next_tvecs[next_i_counter % 4] = tv
-        conf = 0.999
+        conf = 0.9999
         repr = 1
         while not success:
             conf -= 0.02
@@ -205,8 +206,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                        useExtrinsicGuess=1,
                                                        flags=meth,
                                                        reprojectionError=1,
-                                                       confidence=0.9999)
-            conf = 0.9999
+                                                       confidence=0.99999)
+            conf = 0.99999
             repr = 3
             while not succ:
                 repr += 1
@@ -226,7 +227,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                            useExtrinsicGuess=1,
                                                            flags=meth,
                                                            reprojectionError=5,
-                                                           confidence=0.9999)
+                                                           confidence=0.99999)
             if not succ:
                 continue
             rv = rvec
