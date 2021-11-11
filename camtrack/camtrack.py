@@ -42,7 +42,9 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     # TODO: implement
     frame_count = len(corner_storage)
-    triangulation_parameters = _camtrack.TriangulationParameters(3, 3, 1)
+    # (2,7,1) good for house
+    # (3,7,1) good for other
+    triangulation_parameters = _camtrack.TriangulationParameters(1, 8, 1)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -96,7 +98,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                       useExtrinsicGuess=1,
                                                       flags=cv2.SOLVEPNP_ITERATIVE,
                                                       reprojectionError=1,
-                                                      confidence=0.9995)
+                                                      confidence=0.9999)
         next_rvecs[next_i_counter % 4] = rv
         next_tvecs[next_i_counter % 4] = tv
         conf = 0.999
@@ -104,7 +106,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         while not success:
             conf -= 0.02
             repr += 0.1
-            if conf == 0:
+            if conf <= 0:
                 break
             success, rv, tv, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
                                                           dist_coefs, rvec, tvec,
@@ -197,15 +199,38 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                     new_good_points.append([correspondence_ids[j], points_3d[j]])
             new_good_points = sorted(new_good_points, key=lambda x: x[0])
             new_good_points = [x[1] for x in new_good_points]
-            succ, rv, tv, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
-                                                   intrinsic_mat,
-                                                   dist_coefs, rv, tv,
-                                                   useExtrinsicGuess=1,
-                                                   flags=meth,
-                                                   reprojectionError=1,
-                                                   confidence=0.9999)
+            succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
+                                                       intrinsic_mat,
+                                                       dist_coefs, rv, tv,
+                                                       useExtrinsicGuess=1,
+                                                       flags=meth,
+                                                       reprojectionError=1,
+                                                       confidence=0.9999)
+            conf = 0.9999
+            repr = 3
+            while not succ:
+                repr += 1
+                if repr == 100:
+                    break
+                succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
+                                                           intrinsic_mat,
+                                                           dist_coefs, rv, tv,
+                                                           useExtrinsicGuess=1,
+                                                           flags=meth,
+                                                           reprojectionError=repr,
+                                                           confidence=conf)
+            if not succ:
+                succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
+                                                           intrinsic_mat,
+                                                           dist_coefs, rv, tv,
+                                                           useExtrinsicGuess=1,
+                                                           flags=meth,
+                                                           reprojectionError=5,
+                                                           confidence=0.9999)
             if not succ:
                 continue
+            rv = rvec
+            tv = tvec
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
             print('Recount of {} position, inliers count - {}'.format(new_i, len(inl)))
 
