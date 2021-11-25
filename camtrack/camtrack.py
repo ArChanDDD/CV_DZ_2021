@@ -31,9 +31,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                           known_view_1: Optional[Tuple[int, Pose]] = None,
                           known_view_2: Optional[Tuple[int, Pose]] = None) \
         -> Tuple[List[Pose], PointCloud]:
-    if known_view_1 is None or known_view_2 is None:
-        raise NotImplementedError()
-
     rgb_sequence = frameseq.read_rgb_f32(frame_sequence_path)
     intrinsic_mat = to_opencv_camera_mat3x3(
         camera_parameters,
@@ -42,10 +39,81 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     # TODO: implement
     frame_count = len(corner_storage)
-    # (2,7,1) good for house
-    # (3,7,1) good for other
-    # (1,10,1) for best
-    triangulation_parameters = _camtrack.TriangulationParameters(1, 10, 1)
+
+    def calc_views():
+        print('starting counting first frames...')
+        view_pairs = []
+        for fst in range(frame_count):
+            for snd in range(fst + 10, frame_count):
+                view_pairs.append([fst, snd])
+        seed = 307
+        np.random.seed(seed)
+        np.random.shuffle(view_pairs)
+        max_len = 0
+        good_id_1, good_id_2 = view_pairs[0]
+        good_view_mat = _camtrack.eye3x4()
+        min_commons = 1000
+        while max_len == 0:
+            counter = 0
+            for [fst, snd] in view_pairs:
+                counter += 1
+                if counter >= 1500:
+                    break
+                frame1 = corner_storage[fst]
+                frame2 = corner_storage[snd]
+                if len([x for x in frame1.ids if x in frame2.ids]) < min_commons:
+                    continue
+                corr_matcher = _camtrack.build_correspondences(frame1, frame2)
+                essential_mat, mask = cv2.findEssentialMat(corr_matcher.points_1,
+                                                           corr_matcher.points_2,
+                                                           intrinsic_mat,
+                                                           method=cv2.RANSAC)
+                if essential_mat is None:
+                    continue
+
+                new_mask = mask.flatten().astype(bool)
+                common_ids = corr_matcher.ids[new_mask]
+                common_points_1 = corr_matcher.points_1[new_mask]
+                common_points_2 = corr_matcher.points_2[new_mask]
+                correspondence = _camtrack.Correspondences(common_ids, common_points_1, common_points_2)
+
+                homography_mat, mask = cv2.findHomography(correspondence.points_1,
+                                                          correspondence.points_2,
+                                                          method=cv2.RANSAC,
+                                                          ransacReprojThreshold=1,
+                                                          confidence=0.9999)
+                if homography_mat is None:
+                    continue
+
+                pos_rvec1, pos_rvec2, pos_tvec = cv2.decomposeEssentialMat(essential_mat)
+                pos_views = [np.hstack([pos_rvec1, pos_tvec]),
+                             np.hstack([pos_rvec2, pos_tvec]),
+                             np.hstack([pos_rvec1, -pos_tvec]),
+                             np.hstack([pos_rvec2, -pos_tvec])]
+                for view_mat in pos_views:
+                    points_3d, correspondence_ids, mcos = _camtrack.triangulate_correspondences(correspondence,
+                                                                                                view_mat,
+                                                                                                _camtrack.eye3x4(),
+                                                                                                intrinsic_mat,
+                                                                                                _camtrack.TriangulationParameters(
+                                                                                                    2, 1, 0.00001))
+                    if len(points_3d) > max_len:
+                        max_len = len(points_3d)
+                        good_view_mat = view_mat
+                        good_id_1 = fst
+                        good_id_2 = snd
+                        print('new max_len of common points after triangulation: {}. Frames ids: {} and {}'.format(max_len,
+                                                                                                                   fst,
+                                                                                                                   snd))
+            min_commons *= 0.8
+
+        print('Done!')
+        return [good_id_1, _camtrack.view_mat3x4_to_pose(good_view_mat)], \
+               [good_id_2, _camtrack.view_mat3x4_to_pose(_camtrack.eye3x4())],
+
+    if known_view_1 is None or known_view_2 is None:
+        known_view_1, known_view_2 = calc_views()
+    triangulation_parameters = _camtrack.TriangulationParameters(1, 10, 0.001)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -61,7 +129,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                                                 intrinsic_mat,
                                                                                 _camtrack.TriangulationParameters(5,
                                                                                                                   0.1,
-                                                                                                                  0.01))
+                                                                                                                  0.001))
     view_mats = [pose_to_view_mat3x4(known_view_1[1])] * frame_count
     view_mats[known_view_1[0]] = pose_to_view_mat3x4(known_view_1[1])
     view_mats[known_view_2[0]] = pose_to_view_mat3x4(known_view_2[1])
@@ -208,7 +276,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                        reprojectionError=1,
                                                        confidence=0.99999)
             conf = 0.99999
-            repr = 3
+            repr = 2
             while not succ:
                 repr += 1
                 if repr == 100:
