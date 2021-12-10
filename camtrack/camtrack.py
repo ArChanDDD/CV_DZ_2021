@@ -43,38 +43,52 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     RECOUNT_REPROJECTION_ERROR = 0.9
     REPROJECTION_ERROR = 1.4
     REPR_ERROR = 3
-    MIN_3D_POINTS = 10
-
-    #BASELINE = 0.9
-    #RECOUNT_REPROJECTION_ERROR = 0.9
-    #REPROJECTION_ERROR = 1.4
-    #REPR_ERROR = 1.4
-    #MIN_3D_POINTS = 10
+    MIN_POINTS_COUNT = 10
 
     frame_count = len(corner_storage)
 
-    view_mats = [0] * frame_count
+    triangulation_parameters = _camtrack.TriangulationParameters(1.5, 10, 0.00001)
+    start_triangulation_parameters = _camtrack.TriangulationParameters(2, 0.001, 0.0001)
 
-    frames_of_corner = {}
+    sim_corners = {}
+
+    def triangulate(id0, id1, f_0, f_1, params=start_triangulation_parameters):
+        return _camtrack.triangulate_correspondences(
+            _camtrack.build_correspondences(corner_storage[id0], corner_storage[id1]),
+            f_0, f_1, intrinsic_mat, params)
+
     for i, corners in enumerate(corner_storage):
         for id_in_list, j in enumerate(corners.ids.flatten()):
-            if j not in frames_of_corner.keys():
-                frames_of_corner[j] = [[i, id_in_list]]
+            if j not in sim_corners.keys():
+                sim_corners[j] = [[i, id_in_list]]
             else:
-                frames_of_corner[j].append([i, id_in_list])
+                sim_corners[j].append([i, id_in_list])
 
-    def triangulate(f_id_0, f_id_1, params=_camtrack.TriangulationParameters(2, 0.001, 0.0001)):
-        return _camtrack.triangulate_correspondences(
-            _camtrack.build_correspondences(corner_storage[f_id_0], corner_storage[f_id_1]),
-            view_mats[f_id_0], view_mats[f_id_1], intrinsic_mat, params)
+    # Изначальная схема работала, как оказалось плохо и долго, хотя бы потому что я перебирал кучу неликвидных вариантов
+    # Посмотрел на dataset_ha2, нашел наиболее хорошие расстояния, решил смотреть только по ним.
+
+    frame_steps = [9, 30, 40]
 
     def calc_views():
         print('initializing started')
 
-        frame_steps = [9, 30, 40]
-        def get_first_cam_pose(frame_0, frame_1):
-            corrs = _camtrack.build_correspondences(corner_storage[frame_0], corner_storage[frame_1])
-            essential_mat, _ = cv2.findEssentialMat(corrs.points_1, corrs.points_2, intrinsic_mat, cv2.RANSAC, 0.999, 2.0)
+        # Тут вычисляем Pose, если она ок
+        def calc_good_pose(frame_0, frame_1):
+            correspondence = _camtrack.build_correspondences(corner_storage[frame_0], corner_storage[frame_1])
+
+            homography_mat, mask = cv2.findHomography(
+                correspondence.points_1, correspondence.points_2,
+                method=cv2.RANSAC,
+                ransacReprojThreshold=1.0,
+                confidence=.999)
+            if homography_mat is None:
+                return False, None, None, None, None, None
+
+            if np.count_nonzero(mask) / correspondence.ids.size > .8:
+                return False, None, None, None, None, None
+
+            essential_mat, _ = cv2.findEssentialMat(correspondence.points_1, correspondence.points_2,
+                                                    intrinsic_mat, cv2.RANSAC, 0.999, 2.0)
 
             pos_rvec1, pos_rvec2, pos_tvec = cv2.decomposeEssentialMat(essential_mat)
             pos_views = [[pos_rvec1, pos_tvec],
@@ -82,84 +96,73 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                          [pos_rvec1, -pos_tvec],
                          [pos_rvec2, -pos_tvec]]
             best_R, best_t = pos_views[0]
-            max_positive_z = 0
-            for [R, t] in pos_views:
-                view_mat0 = np.hstack((np.eye(3), np.zeros((3, 1))))
-                view_mat1 = np.hstack((R, t.reshape((3, 1))))
-                view_mats[frame_0] = view_mat0
-                view_mats[frame_1] = view_mat1
-                points3d, ids, mcos = triangulate(frame_0, frame_1)
-                cur_positive_z = 0
-                for pt in points3d:
-                    pt = np.append(pt, np.zeros((1))).reshape((4, 1))
-                    pt_transformed0 = (view_mat0 @ pt).flatten()
-                    z0 = pt_transformed0[2]
-                    pt_transformed1 = (view_mat1 @ pt).flatten()
-                    z1 = pt_transformed1[2]
-                    cur_positive_z += (z0 > 0.1) + (z1 > 0.1)
-                if cur_positive_z > max_positive_z:
-                    max_positive_z = cur_positive_z
-                    best_R = R
-                    best_t = t
+            max_trans_diff = 0
+            for [rvec_v, tvec_v] in pos_views:
+                view_mat0 = _camtrack.eye3x4()
+                view_mat1 = np.hstack((rvec_v, tvec_v.reshape((3, 1))))
+                points3d, ids, mcos = triangulate(frame_0, frame_1, view_mat0, view_mat1)
+                trans_diff = 0
+                for point3d in points3d:
+                    point3d = np.append(point3d, np.zeros((1))).reshape((4, 1))
+                    trans_points0 = (view_mat0 @ point3d).flatten()
+                    trans_points1 = (view_mat1 @ point3d).flatten()
+                    trans_diff += (trans_points0[2] > 0.1) + (trans_points1[2] > 0.1)
+                if trans_diff > max_trans_diff:
+                    max_trans_diff = trans_diff
+                    best_R = rvec_v
+                    best_t = tvec_v
 
-            baseline = np.linalg.norm(best_t)
-
-            view_mat0 = np.hstack((np.eye(3), np.zeros((3, 1))))
+            view_mat0 = _camtrack.eye3x4()
             view_mat1 = np.hstack((best_R, best_t.reshape((3, 1))))
-            view_mats[frame_0] = view_mat0
-            view_mats[frame_1] = view_mat1
-            points3d, ids, median_cos = triangulate(frame_0, frame_1)
+            points3d, ids, median_cos = triangulate(frame_0, frame_1, view_mat0, view_mat1)
             points0 = []
             points1 = []
             for i in ids:
-                for j in frames_of_corner[i]:
+                for j in sim_corners[i]:
                     if j[0] == frame_0:
                         points0.append(j[1])
                     if j[0] == frame_1:
                         points1.append(j[1])
             points0 = np.array(points0)
             points1 = np.array(points1)
-            sum_error = _camtrack.compute_reprojection_errors(points3d, corner_storage[frame_0].points[points0],
-                                                              intrinsic_mat @ view_mat0) + _camtrack.compute_reprojection_errors(
-                points3d,
-                corner_storage[
-                    frame_1].points[
-                    points1],
-                intrinsic_mat @ view_mat1)
-            reprojection_error = np.mean(sum_error)
-            points3d_count = len(points3d)
+            reprojection_error = np.mean(
+                _camtrack.compute_reprojection_errors(points3d, corner_storage[frame_0].points[points0],
+                                                      intrinsic_mat @ view_mat0) + _camtrack.compute_reprojection_errors(
+                    points3d, corner_storage[frame_1].points[points1], intrinsic_mat @ view_mat1))
 
-            if baseline < BASELINE or reprojection_error > REPROJECTION_ERROR or points3d_count < MIN_3D_POINTS:
-                return False, baseline, reprojection_error, points3d_count, None, None
+            if np.linalg.norm(best_t) < BASELINE or reprojection_error > REPROJECTION_ERROR \
+                    or len(points3d) < MIN_POINTS_COUNT:
+                return False, None, None, None, None, None
             else:
-                return True, baseline, reprojection_error, points3d_count, best_R, best_t
+                return True, np.linalg.norm(best_t), reprojection_error, len(points3d), best_R, best_t
 
-        best_frame_step = 5
-        ind = None
+        best_step = -1
+        good_id = -1
         for frame_step in frame_steps:
             for i in range(frame_count // 2):
                 if i + frame_step < frame_count * 0.85:
-                    succ, baseline, rep_err, points3d_cnt, Rx, tx = get_first_cam_pose(i, i + frame_step)
+                    succ, baseline, rep_err, points3d_cnt, Rx, tx = calc_good_pose(i, i + frame_step)
                     if succ:
-                        ind = i
-                        best_frame_step = frame_step
+                        good_id = i
+                        best_step = frame_step
                         if frame_count > 100:
                             break
 
-        frame_0 = ind
-        frame_1 = ind + best_frame_step
-        succ, baseline, rep_err, points3d_cnt, R, t = get_first_cam_pose(frame_0, frame_1)
+        frame_0 = good_id
+        frame_1 = good_id + best_step
+        succ, baseline, rep_err, points3d_cnt, R, t = calc_good_pose(frame_0, frame_1)
         print('Done')
-        view_mat0 = np.hstack((np.eye(3), np.zeros((3, 1))))
+        view_mat0 = _camtrack.eye3x4()
         view_mat1 = np.hstack((R, t.reshape((3, 1))))
 
         return [frame_0, _camtrack.view_mat3x4_to_pose(view_mat0)], \
                [frame_1, _camtrack.view_mat3x4_to_pose(view_mat1)]
 
+    # Дальше все то же самое
+
     if known_view_1 is None or known_view_2 is None:
         known_view_1, known_view_2 = calc_views()
 
-    triangulation_parameters = _camtrack.TriangulationParameters(1.5, 10, 0.00001)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -209,7 +212,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         rvec = next_rvecs[next_i_counter % 4]
         tvec = next_tvecs[next_i_counter % 4]
 
-        conf = 0.99999
+        conf = 0.999999
         repr = REPR_ERROR
 
         success, rv, tv, inliers = cv2.solvePnPRansac(np.array(good_points), good_corners.points, intrinsic_mat,
@@ -314,7 +317,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
             new_good_points = sorted(new_good_points, key=lambda x: x[0])
             new_good_points = [x[1] for x in new_good_points]
 
-            conf = 0.99999
+            conf = 0.999999
             repr = RECOUNT_REPROJECTION_ERROR
 
             succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
