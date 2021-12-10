@@ -44,20 +44,27 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
         print('starting counting first frames...')
         view_pairs = []
         for fst in range(frame_count):
-            for snd in range(fst + 10, frame_count):
+            for snd in range(fst + 15, min(fst + 60, frame_count)):
                 view_pairs.append([fst, snd])
+
         seed = 307
         np.random.seed(seed)
         np.random.shuffle(view_pairs)
         max_len = 0
         good_id_1, good_id_2 = view_pairs[0]
         good_view_mat = _camtrack.eye3x4()
-        min_commons = 1000
-        while max_len == 0:
+        max_corners_len = max([len(x.ids) for x in corner_storage])
+        min_commons = max_corners_len
+        prob = 0.9
+        while max_len == 0 or min_commons > max_corners_len * 0.5:
+            print('Cur commons - {}'.format(min_commons))
             counter = 0
+            if min_commons < 100:
+                min_commons = max_corners_len
+                prob -= 0.1
             for [fst, snd] in view_pairs:
                 counter += 1
-                if counter >= 1500:
+                if counter >= 500:
                     break
                 frame1 = corner_storage[fst]
                 frame2 = corner_storage[snd]
@@ -67,7 +74,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                 essential_mat, mask = cv2.findEssentialMat(corr_matcher.points_1,
                                                            corr_matcher.points_2,
                                                            intrinsic_mat,
-                                                           method=cv2.RANSAC)
+                                                           method=cv2.RANSAC,
+                                                           prob=prob)
                 if essential_mat is None:
                     continue
 
@@ -81,8 +89,8 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                           correspondence.points_2,
                                                           method=cv2.RANSAC,
                                                           ransacReprojThreshold=1,
-                                                          confidence=0.9999)
-                if homography_mat is None:
+                                                          confidence=0.999)
+                if homography_mat is None or np.count_nonzero(mask) / len(correspondence.ids) > 0.2:
                     continue
 
                 pos_rvec1, pos_rvec2, pos_tvec = cv2.decomposeEssentialMat(essential_mat)
@@ -96,16 +104,17 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                                                                 _camtrack.eye3x4(),
                                                                                                 intrinsic_mat,
                                                                                                 _camtrack.TriangulationParameters(
-                                                                                                    2, 1, 0.00001))
+                                                                                                    1, 1, 0.00001))
                     if len(points_3d) > max_len:
                         max_len = len(points_3d)
                         good_view_mat = view_mat
                         good_id_1 = fst
                         good_id_2 = snd
-                        print('new max_len of common points after triangulation: {}. Frames ids: {} and {}'.format(max_len,
-                                                                                                                   fst,
-                                                                                                                   snd))
-            min_commons *= 0.8
+                        print('new max_len of common points after triangulation: {}. Frames ids: {} and {}'.format(
+                            max_len,
+                            fst,
+                            snd))
+            min_commons *= 0.9
 
         print('Done!')
         return [good_id_1, _camtrack.view_mat3x4_to_pose(good_view_mat)], \
@@ -113,7 +122,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
 
     if known_view_1 is None or known_view_2 is None:
         known_view_1, known_view_2 = calc_views()
-    triangulation_parameters = _camtrack.TriangulationParameters(1, 10, 0.001)
+    triangulation_parameters = _camtrack.TriangulationParameters(1, 10, 0.00001)
     scope = max(1, int(abs(known_view_1[0] - known_view_2[0]) / 3), int(frame_count * 0.05))
     dist_coefs = np.array([0, 0, 0, 0, 0], dtype=float)
 
@@ -185,6 +194,11 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                           confidence=conf)
             next_rvecs[next_i_counter % 4] = rv
             next_tvecs[next_i_counter % 4] = tv
+        # if success:
+        #    if len(inliers) / len(cur_corners.ids) < 0.03:
+        #        print('skipped ', i, ' and ', len(inliers) / len(cur_corners.ids))
+        #        next_i_counter += 1
+        #        continue
         view_mat = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
         view_mats[i] = view_mat
 
@@ -273,13 +287,15 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                        dist_coefs, rv, tv,
                                                        useExtrinsicGuess=1,
                                                        flags=meth,
-                                                       reprojectionError=1,
-                                                       confidence=0.99999)
-            conf = 0.99999
-            repr = 2
+                                                       reprojectionError=2,
+                                                       confidence=0.9999999)
+            conf = 0.999999
+            repr = 1
+
             while not succ:
-                repr += 1
-                if repr == 100:
+                repr += 0.1
+                conf -= 0.00001
+                if repr > 5:
                     break
                 succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
                                                            intrinsic_mat,
@@ -289,19 +305,12 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                                                            reprojectionError=repr,
                                                            confidence=conf)
             if not succ:
-                succ, rvec, tvec, inl = cv2.solvePnPRansac(np.array(new_good_points), new_good_corners.points,
-                                                           intrinsic_mat,
-                                                           dist_coefs, rv, tv,
-                                                           useExtrinsicGuess=1,
-                                                           flags=meth,
-                                                           reprojectionError=5,
-                                                           confidence=0.99999)
-            if not succ:
                 continue
             rv = rvec
             tv = tvec
             view_mats[new_i] = _camtrack.rodrigues_and_translation_to_view_mat3x4(rv, tv)
-            print('Recount of {} position, inliers count - {}'.format(new_i, len(inl)))
+            print('Recount of {} position, inliers count - {} from {}, cur repr - {}'
+                  .format(new_i, len(inl), len(corner_storage[new_i].ids), repr))
 
     recount()
 
