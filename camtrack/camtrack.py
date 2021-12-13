@@ -67,7 +67,7 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     # Изначальная схема работала, как оказалось плохо и долго, хотя бы потому что я перебирал кучу неликвидных вариантов
     # Посмотрел на dataset_ha2, нашел наиболее хорошие расстояния, решил смотреть только по ним.
 
-    frame_steps = [9, 30, 40]
+    frame_steps = [3, 9, 20, 30, 40, 80]
 
     def calc_views():
         print('initializing started')
@@ -250,8 +250,6 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
                 continue
             camera_center_new = _camtrack.to_camera_center(view_mats[j])
             distance = np.linalg.norm(camera_center_new - camera_center)
-            vecs_1 = normalize(camera_center - points_3d)
-            vecs_2 = normalize(camera_center_new - points_3d)
             if distance >= max_distance:
                 max_distance = distance
                 max_idx = j
