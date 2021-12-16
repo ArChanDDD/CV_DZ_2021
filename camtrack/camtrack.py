@@ -40,10 +40,10 @@ def track_and_calc_colors(camera_parameters: CameraParameters,
     # TODO: implement
 
     BASELINE = 0.9
-    RECOUNT_REPROJECTION_ERROR = 0.9
-    REPROJECTION_ERROR = 1.4
-    REPR_ERROR = 3
-    MIN_POINTS_COUNT = 10
+    RECOUNT_REPROJECTION_ERROR = 1.3
+    REPROJECTION_ERROR = 1.6
+    REPR_ERROR = 2
+    MIN_POINTS_COUNT = 20
 
     frame_count = len(corner_storage)
 
